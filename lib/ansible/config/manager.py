@@ -21,7 +21,7 @@ from ansible.module_utils.common._collections_compat import Mapping, Sequence
 from ansible.module_utils.common.yaml import yaml_load
 from ansible.module_utils.six import string_types
 from ansible.module_utils.parsing.convert_bool import boolean
-from ansible.parsing.quoting import unquote, is_quoted
+from ansible.parsing.quoting import unquote
 from ansible.parsing.yaml.objects import AnsibleVaultEncryptedUnicode
 from ansible.utils import py3compat
 from ansible.utils.path import cleanup_tmp_file, makedirs_safe, unfrackpath
@@ -96,15 +96,8 @@ def ensure_type(value, value_type, origin=None):
                 errmsg = 'list'
 
         elif value_type == 'none':
-            if value == "None" or value == "null":
+            if value == "None":
                 value = None
-            # Handles cases where config value may be set such as
-            # null_representation = "" we want to pass the old behavior of "" rather than null
-            # or user will pass their own representation with a string but we still want to have
-            # the value type as None.
-            elif is_quoted(value):
-                value = unquote(value)
-                return to_text(value, errors='surrogate_or_strict', nonstring='passthru')
 
             if value is not None:
                 errmsg = 'None'
