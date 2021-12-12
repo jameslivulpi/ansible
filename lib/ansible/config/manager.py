@@ -100,8 +100,7 @@ def ensure_type(value, value_type, origin=None):
                 value = None
             # Handles cases where config value may be set such as
             # null_representation = "" we want to pass the old behavior of "" rather than null
-            # or user will pass their own representation with a string but we still want to have
-            # the value type as None.
+            # or user will pass their own representation with a string.
             elif is_quoted(value):
                 value = unquote(value)
                 return to_text(value, errors='surrogate_or_strict', nonstring='passthru')

@@ -11,4 +11,5 @@
     - assert:
         that:
           - foo_null_out.msg == ""
+
             

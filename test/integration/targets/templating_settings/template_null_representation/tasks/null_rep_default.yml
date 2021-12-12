@@ -11,3 +11,4 @@
       assert:
         that:
           - foo_null == None
+
