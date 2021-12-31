@@ -7,6 +7,7 @@
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import cProfile
 
 DOCUMENTATION = r'''
 ---
@@ -221,7 +222,7 @@ class ServiceScanService(BaseService):
 
 
 class SystemctlScanService(BaseService):
-
+  
     def systemd_enabled(self):
         # Check if init is the systemd command, using comm as cmdline could be symlink
         try:
@@ -233,9 +234,9 @@ class SystemctlScanService(BaseService):
             if 'systemd' in line:
                 return True
         return False
+        
 
     def gather_services(self):
-        BAD_STATES = frozenset(['not-found', 'masked', 'failed'])
         services = {}
         if not self.systemd_enabled():
             return None
@@ -243,46 +244,33 @@ class SystemctlScanService(BaseService):
         if systemctl_path is None:
             return None
 
-        # list units as systemd sees them
-        rc, stdout, stderr = self.module.run_command("%s list-units --no-pager --type service --all" % systemctl_path, use_unsafe_shell=True)
-        for line in [svc_line for svc_line in stdout.split('\n') if '.service' in svc_line]:
+        # Get units from both systemd outputs for complete output
+        _, list_units_stdout, _ = self.module.run_command("%s list-units --no-pager --type service --all --no-legend" % systemctl_path, use_unsafe_shell=True)
+        list_units_stdout = [svc_line.split() for svc_line in list_units_stdout.split('\n') if '.service' in svc_line]
+        
+        for line in list_units_stdout:
+            service_name = line[0]
+            status_val = line[2]
+            sub_val = line[3]
+            services[service_name] = {"name": service_name, "state": sub_val, "status": status_val, "source": "systemd"}
 
-            state_val = "stopped"
-            status_val = "unknown"
-            fields = line.split()
-            for bad in BAD_STATES:
-                if bad in fields:  # dot is 0
-                    status_val = bad
-                    fields = fields[1:]
-                    break
-            else:
-                # active/inactive
-                status_val = fields[2]
+        _, list_files_stdout, _ = self.module.run_command("%s list-unit-files --no-pager --type service --all --no-legend" % systemctl_path, use_unsafe_shell=True)
+        list_files_stdout = [svc_line.split() for svc_line in list_files_stdout.split('\n') if '.service' in svc_line]
 
-            # array is normalize so predictable now
-            service_name = fields[0]
-            if fields[3] == "running":
-                state_val = "running"
-
-            services[service_name] = {"name": service_name, "state": state_val, "status": status_val, "source": "systemd"}
-
-        # now try unit files for complete picture and final 'status'
-        rc, stdout, stderr = self.module.run_command("%s list-unit-files --no-pager --type service --all" % systemctl_path, use_unsafe_shell=True)
-        for line in [svc_line for svc_line in stdout.split('\n') if '.service' in svc_line]:
-            # there is one more column (VENDOR PRESET) from `systemctl list-unit-files` for systemd >= 245
-            try:
-                service_name, status_val = line.split()[:2]
-            except IndexError:
-                self.module.fail_json(msg="Malformed output discovered from systemd list-unit-files: {0}".format(line))
+        for line in list_files_stdout:
+            service_name = line[0]
             if service_name not in services:
-                rc, stdout, stderr = self.module.run_command("%s show %s --property=ActiveState" % (systemctl_path, service_name), use_unsafe_shell=True)
-                state = 'unknown'
-                if not rc and stdout != '':
-                    state = stdout.replace('ActiveState=', '').rstrip()
-                services[service_name] = {"name": service_name, "state": state, "status": status_val, "source": "systemd"}
-            elif services[service_name]["status"] not in BAD_STATES:
-                services[service_name]["status"] = status_val
-
+                rc, stdout, _ = self.module.run_command("%s show %s -p ,ActiveState,SubState" % (systemctl_path, service_name), use_unsafe_shell=True)
+                if rc == 0:
+                    # partition each property to get only the states
+                    # e.g.:
+                    #  ['ActiveState=inactive', 'SubState=dead']
+                    # will become:
+                    # ['inactive', 'dead']
+                    stdout = [i.partition("=")[2] for i in stdout.split()]
+                    status_val = stdout[0]
+                    sub_val = stdout[1]
+                    services[service_name] = {"name": service_name, "state": sub_val, "status": status_val, "source": "systemd"}
         return services
 
 
@@ -359,6 +347,8 @@ class OpenBSDScanService(BaseService):
 
 
 def main():
+    # pr = cProfile.Profile()
+    # pr.enable()
     module = AnsibleModule(argument_spec=dict(), supports_check_mode=True)
     locale = get_best_parsable_locale(module)
     module.run_command_environ_update = dict(LANG=locale, LC_ALL=locale)
@@ -378,6 +368,16 @@ def main():
         results = dict(ansible_facts=dict(services=all_services))
         if incomplete_warning:
             results['msg'] = "WARNING: Could not find status for all services. Sometimes this is due to insufficient privileges."
+    # pr.disable()
+
+    # import pstats
+    # import io
+    # #raise Exception(pr.print_stats())
+    # s = io.StringIO()
+    # ps = pstats.Stats(pr, stream=s).sort_stats('cumtime')
+    # ps.print_stats()
+
+   
     module.exit_json(**results)
 
 
