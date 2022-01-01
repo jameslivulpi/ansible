@@ -7,7 +7,6 @@
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
-import cProfile
 
 DOCUMENTATION = r'''
 ---
@@ -222,7 +221,7 @@ class ServiceScanService(BaseService):
 
 
 class SystemctlScanService(BaseService):
-  
+
     def systemd_enabled(self):
         # Check if init is the systemd command, using comm as cmdline could be symlink
         try:
@@ -234,7 +233,7 @@ class SystemctlScanService(BaseService):
             if 'systemd' in line:
                 return True
         return False
-        
+
 
     def gather_services(self):
         services = {}
@@ -244,33 +243,34 @@ class SystemctlScanService(BaseService):
         if systemctl_path is None:
             return None
 
-        # Get units from both systemd outputs for complete output
-        _, list_units_stdout, _ = self.module.run_command("%s list-units --no-pager --type service --all --no-legend" % systemctl_path, use_unsafe_shell=True)
-        list_units_stdout = [svc_line.split() for svc_line in list_units_stdout.split('\n') if '.service' in svc_line]
-        
-        for line in list_units_stdout:
+        # Get units as systemd sees them
+        rc, list_units_stdout, stderr = self.module.run_command("%s list-units --type service --all --no-pager --no-legend --plain" % systemctl_path, use_unsafe_shell=True)
+        for line in [svc_line.split() for svc_line in list_units_stdout.split("\n") if ".service" in svc_line]:
             service_name = line[0]
             status_val = line[2]
             sub_val = line[3]
-            services[service_name] = {"name": service_name, "state": sub_val, "status": status_val, "source": "systemd"}
+            services[service_name] = {"name": service_name, "state": status_val, "status": sub_val, "source": "systemd"}
 
-        _, list_files_stdout, _ = self.module.run_command("%s list-unit-files --no-pager --type service --all --no-legend" % systemctl_path, use_unsafe_shell=True)
-        list_files_stdout = [svc_line.split() for svc_line in list_files_stdout.split('\n') if '.service' in svc_line]
-
-        for line in list_files_stdout:
+        # now try unit files for complete picture and final 'status'
+        rc, list_files_stdout, stderr = self.module.run_command("%s list-unit-files --type service --all --no-pager --no-legend --plain" % systemctl_path, use_unsafe_shell=True)
+        for line in list_files_stdout.split():
             service_name = line[0]
             if service_name not in services:
-                rc, stdout, _ = self.module.run_command("%s show %s -p ,ActiveState,SubState" % (systemctl_path, service_name), use_unsafe_shell=True)
+                rc, show_service_stdout, stderr = self.module.run_command("%s show %s -p ActiveState,SubState" % (systemctl_path, service_name), use_unsafe_shell=True)
                 if rc == 0:
                     # partition each property to get only the states
                     # e.g.:
                     #  ['ActiveState=inactive', 'SubState=dead']
                     # will become:
                     # ['inactive', 'dead']
-                    stdout = [i.partition("=")[2] for i in stdout.split()]
-                    status_val = stdout[0]
-                    sub_val = stdout[1]
-                    services[service_name] = {"name": service_name, "state": sub_val, "status": status_val, "source": "systemd"}
+                    show_service_stdout = [i.partition("=")[2] for i in show_service_stdout.split()]
+                    status_val = show_service_stdout[0]
+                    sub_val = show_service_stdout[1]
+                    services[service_name] = {"name": service_name, "state": status_val, "status": sub_val, "source": "systemd"}
+               # else:
+                    # template units
+                    # services[service_name] = {"name": service_name, "state": "unknown", "status": "unknown", "source": "systemd"}
+
         return services
 
 
@@ -347,8 +347,6 @@ class OpenBSDScanService(BaseService):
 
 
 def main():
-    # pr = cProfile.Profile()
-    # pr.enable()
     module = AnsibleModule(argument_spec=dict(), supports_check_mode=True)
     locale = get_best_parsable_locale(module)
     module.run_command_environ_update = dict(LANG=locale, LC_ALL=locale)
@@ -368,16 +366,6 @@ def main():
         results = dict(ansible_facts=dict(services=all_services))
         if incomplete_warning:
             results['msg'] = "WARNING: Could not find status for all services. Sometimes this is due to insufficient privileges."
-    # pr.disable()
-
-    # import pstats
-    # import io
-    # #raise Exception(pr.print_stats())
-    # s = io.StringIO()
-    # ps = pstats.Stats(pr, stream=s).sort_stats('cumtime')
-    # ps.print_stats()
-
-   
     module.exit_json(**results)
 
 

@@ -27,10 +27,10 @@
 - name: Populate service facts
   service_facts:
 
-- name: get ansible_test service's state
-  debug:
-    var: services['ansible_test.service'].state
-
 - name: ansible_test service's running state should be \"inactive\"
   assert:
     that: "services['ansible_test.service'].state == 'inactive'"
+
+- name: ansible_test service's running state should be \"failed\"
+  assert:
+    that: "services['failed.service'].state == 'failed'"
